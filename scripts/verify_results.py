@@ -32,9 +32,11 @@ def verify_job(directory, maximum):
     for call in report['model_calls']:
         command=s.read_json(directory/(call['log_label']+'.command.json'))['argv']
         mid=call['model_id']
+        explicit_fallback_ok = ('--fallback-model' not in command if report.get('routing_mode') == 'fixed_primary'
+                                else '--fallback-model' in command and command[command.index('--fallback-model')+1]==mid)
         checks['explicit_model_and_identity'] &= (
             command[command.index('--model')+1]==mid
-            and command[command.index('--fallback-model')+1]==mid
+            and explicit_fallback_ok
             and (call['state']!='succeeded' or call['consumption']['observed_model_ids']==[mid]))
         checks['cost_below_threshold'] &= Decimal(call['credit_multiplier'])<Decimal(str(maximum))
         checks['no_permission_bypass'] &= not any(x in command for x in ('-y','--dangerously-skip-permissions','--serve'))

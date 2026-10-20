@@ -14,6 +14,9 @@ def service(cfg, model=None):
         policy = s.read_json(policy_file)
         policy['max_credit_multiplier'] = str(cfg['max_credit_multiplier'])
         policy['default_model'] = cfg['default_model']
+        for key in ('primary_model', 'fallback_model', 'fallback_model_name',
+                    'fallback_model_verified', 'max_technical_retries'):
+            policy[key] = cfg[key]
         policy['models'] = {k: v for k, v in policy['models'].items() if k in cfg['candidate_models']}
         if not cfg['benchmark_enabled']:
             policy['benchmark_report'] = 'benchmark-disabled.json'

@@ -20,7 +20,7 @@ import sys
 import time
 import uuid
 import zipfile
-from .model_policy import ModelPolicy, PolicyError, classify_cli, telemetry
+from .model_policy import ModelPolicy, PolicyError, classify_cli, telemetry, PRIMARY, FALLBACK, SERVICE_FAILURES
 
 from .runtime import discover_cli, cli_command
 ROOT = Path(__file__).resolve().parent
@@ -296,6 +296,7 @@ class Scheduler:
         self.policy = ModelPolicy(models, self.cli)
         self.manual_model = model
         self.model_calls = []
+        self.active_model = None
 
     def locate(self, task_id):
         if not isinstance(task_id, str) or not re.fullmatch('[a-f0-9]{32}', task_id):
@@ -332,6 +333,8 @@ class Scheduler:
         inp.write_text(stdin or '', encoding='utf-8')
         env = git_env()
         if agent:
+            if '--fallback-model' in argv:
+                raise Failure('policy_invalid', 'CLI implicit fallback is disabled; scheduler owns switching')
             if '--model' not in argv:
                 raise Failure('model_not_whitelisted', 'Every inference must explicitly pin --model')
             mid = argv[argv.index('--model') + 1]
@@ -398,62 +401,117 @@ class Scheduler:
         finally:
             meta['duration_seconds'] = round(time.monotonic() - started, 3)
             write_json(job / (label + '.command.json'), meta)
-        if meta['timed_out']:
-            raise Failure('timeout', 'Timed out: ' + label)
         stderr = err_path.read_text('utf-8', errors='replace')[-10000:]
         if agent and re.search(r'\b(EACCES|EPERM)\b|permission denied|permission_denied', stderr, re.I):
             raise Failure('permission_denied', 'CLI access denied; see ' + err_path.name)
         if out_path.stat().st_size > 2_000_000:
             raise Failure('resource_limit', 'Command output exceeds 2MB parse limit')
+        if meta['timed_out']:
+            if not agent:
+                raise Failure('timeout', 'Test process timed out: ' + label)
+            if meta.get('termination_unconfirmed') or meta.get('tree_kill_exit_code', 0) != 0 or meta.get('tree_kill_error'):
+                raise Failure('termination_unconfirmed', 'CLI timed out; safe process-tree termination not confirmed')
+            out = out_path.read_text('utf-8', errors='replace')
+            if classify_cli(out, stderr, meta['exit_code']) == 'model_timeout':
+                raise Failure('model_timeout', 'Explicit remote timeout: ' + label)
+            raise Failure('execution_timeout', 'CLI wall-clock timeout without evidence of a remote model timeout')
         return meta, out_path.read_text('utf-8', errors='replace'), stderr
 
+    def workspace_fingerprint(self, job):
+        ws = job / 'workspace'
+        return {'files': inventory(ws), 'git': inventory(ws / '.git') if (ws / '.git').is_dir() else None}
+
+    def restart_clean_workspace(self, job):
+        """Archive this task's partial copy; never touch the source repository."""
+        ws, clean = job / 'workspace', job / 'clean-workspace'
+        if (job.resolve() != self.jobs / job.name or ws.is_symlink() or clean.is_symlink()
+                or (hasattr(ws, 'is_junction') and (ws.is_junction() or clean.is_junction()))):
+            raise Failure('workspace_state_uncertain', 'Unsafe workspace paths')
+        if not clean.is_dir() or inventory(clean) != read_json(job / 'baseline.json'):
+            raise Failure('workspace_state_uncertain', 'Clean baseline unavailable or changed')
+        if inventory(clean / '.git') != read_json(job / 'clean-git.json'):
+            raise Failure('workspace_state_uncertain', 'Clean baseline Git metadata changed')
+        archived = job / ('workspace-before-switch-' + uuid.uuid4().hex)
+        ws.rename(archived)
+        shutil.copytree(clean, ws)
+        self.emit(job, 'workspace_restarted', archive=archived.name, reason='start fallback from original clean baseline')
+
     def call_agent(self, job, task, attempt, prompt):
-        excluded = set()
+        excluded, technical_retry = set(), 0
+        # A successful implementation model remains sticky for its test-driven rework.
+        sticky = self.manual_model or self.active_model
         while True:
             try:
-                selection = self.policy.choose(self.manual_model, excluded)
+                selection = self.policy.choose(sticky, excluded)
             except PolicyError as exc:
                 raise Failure(exc.kind, exc.detail) from exc
             mid = selection['model_id']
-            session = f'bridge-{job.name}-{attempt}-{len(excluded)}'
-            label = f'agent-{attempt}' + (f'-fallback-{len(excluded)}' if excluded else '')
+            phase_state = self.workspace_fingerprint(job)
+            session = f'bridge-{job.name}-{attempt}-{len(excluded)}-{technical_retry}'
+            label = f'agent-{attempt}' + (f'-fallback-{len(excluded)}' if excluded else '') + (f'-retry-{technical_retry}' if technical_retry else '')
             call = {**selection, 'attempt': attempt, 'requested_session_id': session, 'state': 'running',
-                    'log_label': label}
+                    'log_label': label, 'technical_retry': technical_retry,
+                    'call_kind': 'technical_retry' if technical_retry else 'fallback' if excluded else 'rework' if attempt > 1 else 'initial'}
             self.model_calls.append(call)
             self.emit(job, 'agent_running', attempt=attempt, requested_session_id=session, model_selection=selection)
             argv = cli_command(self.node, self.cli) + ['--print', '--output-format', 'json', '--tools', '',
                     '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--setting-sources', '',
                     '--no-session-persistence', '--session-id', session, '--max-turns', '1',
-                    '--model', mid, '--fallback-model', mid, '--effort', 'high']
+                    '--model', mid, '--effort', 'high']
             try:
                 meta, out, err = self.command(job, label, argv, job / 'agent-cwd',
                                               task.get('agent_timeout_seconds', 180), prompt, agent=True)
                 call.update(duration_seconds=meta['duration_seconds'], exit_code=meta['exit_code'],
                             consumption=telemetry(out, mid))
-                kind = classify_cli(out if meta['exit_code'] else '', err, meta['exit_code'])
+                if self.workspace_fingerprint(job) != phase_state:
+                    raise Failure('workspace_state_uncertain', 'Agent changed workspace before approved materialization')
+                kind = classify_cli(out, err, meta['exit_code'])
                 if kind:
                     raise Failure(kind, 'CLI failure; see ' + label)
+                session_id, proposal = parse_agent(out)
                 observed = call['consumption'].get('observed_model_ids', [])
                 if observed != [mid]:
                     raise Failure('model_identity_mismatch', 'CLI reports unexpected model(s): ' + repr(observed))
-                try:
-                    session_id, proposal = parse_agent(out)
-                except Failure as exc:
-                    if exc.kind == 'agent_error' and classify_cli(exc.detail, '', 0) == 'model_unavailable':
-                        raise Failure('model_unavailable', exc.detail) from exc
-                    raise
                 call.update(state='succeeded', agent_session_id=session_id)
+                self.active_model = mid
                 return session_id, proposal
             except Failure as exc:
                 call.update(state='failed', failure_kind=exc.kind)
-                if exc.kind == 'timeout':
-                    call['failure_kind'] = 'model_timeout'
-                    raise Failure('model_timeout', exc.detail) from exc
-                # Only availability/rate-limit failures can switch. Pins never switch.
-                if exc.kind != 'model_unavailable' or self.manual_model:
+                log = job / (label + '.command.json')
+                if log.is_file():
+                    meta = read_json(log)
+                    call.update(duration_seconds=meta.get('duration_seconds'), exit_code=meta.get('exit_code'))
+                if self.workspace_fingerprint(job) != phase_state:
+                    call['failure_kind'] = 'workspace_state_uncertain'
+                    raise Failure('workspace_state_uncertain', 'Changes detected after failed call; no retry or fallback') from exc
+                # Generic process timeout may be local. It must never authorize model switching.
+                if exc.kind not in SERVICE_FAILURES | {'model_timeout'}:
                     raise
-                excluded.add(mid)
-                self.emit(job, 'model_fallback', failed_model=mid, reason=exc.kind)
+                if self.manual_model:
+                    raise
+                if exc.kind == 'model_timeout':
+                    budget = self.policy.data().get('max_technical_retries', 1)
+                    if technical_retry < budget:
+                        technical_retry += 1
+                        self.emit(job, 'model_technical_retry', model_id=mid, retry=technical_retry, reason=exc.kind)
+                        sticky = mid
+                        continue
+                if mid != PRIMARY:
+                    raise  # No third model, no switch back, no fallback loop.
+                try:
+                    fallback = self.policy.choose(excluded={PRIMARY})
+                except PolicyError as rejected:
+                    raise Failure('fallback_unavailable', rejected.kind + ': ' + rejected.detail) from rejected
+                # Even legitimate partial edits from a failed test are not inherited by another model.
+                if phase_state != {'files': read_json(job / 'baseline.json'),
+                                   'git': read_json(job / 'clean-git.json')}:
+                    self.restart_clean_workspace(job)
+                    prompt = self.prompt(task, job / 'workspace', None)
+                excluded = {PRIMARY}
+                technical_retry = 0
+                sticky = None
+                self.emit(job, 'model_fallback', failed_model=mid, target_model=fallback['model_id'],
+                          reason=exc.kind, workspace_verified_clean=True)
 
     def prompt(self, task, ws, feedback):
         context = {}
@@ -493,9 +551,11 @@ class Scheduler:
         except FileExistsError as exc:
             raise Failure('already_running', 'Task is claimed; inspect stale claims manually') from exc
         report = {'task_id': task_id, 'started_at': now(), 'attempts': [], 'changes': [],
+                  'routing_mode': 'fixed_primary',
                   'source_unchanged': None, 'acceptance': [], 'state': 'failed', 'failure_kind': None,
                   'scheduler_sha256': digest(Path(__file__).read_bytes())}
         self.model_calls = []
+        self.active_model = None
         report['model_calls'] = self.model_calls
         repo, before, baseline = None, None, None
         terminal = False
@@ -519,6 +579,8 @@ class Scheduler:
             report['source_head'] = before['head']
             baseline = inventory(ws)
             write_json(job / 'baseline.json', baseline)
+            shutil.copytree(ws, job / 'clean-workspace')
+            write_json(job / 'clean-git.json', inventory(job / 'clean-workspace/.git'))
             (job / 'agent-cwd').mkdir()
             # All protected repository tests remain outside model write scope.
             for test in task['tests']:

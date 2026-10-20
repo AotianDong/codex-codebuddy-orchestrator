@@ -9,6 +9,9 @@ import re
 
 HARD_MAX = Decimal('0.2')
 APPROVED = {'deepseek-v4.1-flash', 'minimax-m3.1-flash'}
+PRIMARY = 'deepseek-v4.1-flash'
+FALLBACK = 'minimax-m3.1-flash'
+SERVICE_FAILURES = {'model_unavailable', 'model_rate_limited', 'model_service_error'}
 WEIGHTS = {'tests': 35, 'first_pass': 20, 'quality': 15, 'rework': 10, 'speed': 10, 'cost': 10}
 
 
@@ -38,8 +41,15 @@ class ModelPolicy:
         try:
             value = load(self.path)
             maximum = Decimal(str(value['max_credit_multiplier']))
-            if not maximum.is_finite() or not 0 < maximum:
-                raise PolicyError('credit_limit_exceeded', 'Configured threshold must be finite and positive')
+            if not maximum.is_finite() or not 0 < maximum <= HARD_MAX:
+                raise PolicyError('credit_limit_exceeded', 'Configured threshold must be positive and <=0.2')
+            if value.get('primary_model', PRIMARY) != PRIMARY:
+                raise PolicyError('policy_invalid', 'Only the fixed DeepSeek primary is permitted')
+            if value.get('fallback_model') not in (None, FALLBACK):
+                raise PolicyError('model_not_whitelisted', 'Only the exact MiniMax fallback is permitted')
+            retries = value.get('max_technical_retries', 1)
+            if type(retries) is not int or not 0 <= retries <= 2:
+                raise PolicyError('policy_invalid', 'max_technical_retries must be 0..2')
             return value
         except (OSError, KeyError, ValueError, InvalidOperation) as exc:
             raise PolicyError('policy_invalid', str(exc)) from exc
@@ -116,36 +126,16 @@ class ModelPolicy:
                 raise PolicyError('model_unavailable', 'Pinned model unavailable; manual pin never silently changes')
             selected['reason'] = 'manual whitelist pin; strict credit check passed'
             return selected
-        candidates, rejected = self.eligible(headless)
-        candidates = {k: v for k, v in candidates.items() if k not in excluded}
-        if not candidates:
-            raise PolicyError('no_compliant_model', json.dumps(rejected, ensure_ascii=False))
         data = self.data()
-        report_file = self.path.parent / data.get('benchmark_report', 'benchmark/latest.json')
-        if report_file.is_file():
-            report = load(report_file)
-            recommendation = report.get('recommendation')
-            current = (report.get('scheduler_sha256') == sha(Path(__file__).with_name('scheduler.py'))
-                     and report.get('policy_rate_signature') == self.rate_signature()
-                     and datetime.now(timezone.utc) - instant(report['finished_at']) < timedelta(days=7))
-            if current:
-                # A cheap candidate with objective poor correctness is not a bootstrap fallback.
-                for mid, result in report.get('models', {}).items():
-                    if result.get('distinct_tasks', 0) >= 10 and (
-                            result.get('final_success_rate', 0) < .9 or result.get('quality_rate', 0) < .9):
-                        candidates.pop(mid, None)
-                if not candidates:
-                    raise PolicyError('no_compliant_model', 'Current benchmark rejects all candidates on correctness/quality')
-            if current and report.get('valid_for_routing') is True and recommendation in candidates:
-                selected = candidates[recommendation]
-                selected['reason'] = 'latest valid benchmark: ' + report.get('recommendation_reason', '')
-                return selected
-        # Not a performance winner: explicit conservative bootstrap selection.
-        mid = data.get('default_model')
-        if mid not in candidates:
-            mid = min(candidates, key=lambda m: (Decimal(candidates[m]['credit_multiplier']), m))
-        selected = candidates[mid]
-        selected['reason'] = 'explicit default or cheapest verified cold-start candidate; no decisive benchmark winner'
+        if PRIMARY not in excluded:
+            selected = self.verified(PRIMARY, headless)
+            selected['reason'] = 'fixed primary priority; benchmark and price ranking do not override'
+            return selected
+        if (data.get('fallback_model') != FALLBACK or data.get('fallback_model_verified') is not True
+                or FALLBACK in excluded):
+            raise PolicyError('fallback_unavailable', 'Primary failed; no qualified configured MiniMax fallback')
+        selected = self.verified(FALLBACK, headless)
+        selected['reason'] = 'qualified MiniMax fallback after an explicit primary service failure'
         return selected
 
     def rate_signature(self):
@@ -156,10 +146,32 @@ class ModelPolicy:
 
 
 def classify_cli(out, err, rc):
-    text = (out + '\n' + err).lower()
+    # Only error messages may authorize switching; never scan generated code/prose.
+    messages = [err]
+    final_success = False
+    if out:
+        try:
+            events = json.loads(out)
+            if isinstance(events, dict):
+                events = [events]
+            final_success = any(isinstance(e, dict) and e.get('type') == 'result'
+                                and e.get('is_error') is False for e in events)
+            messages.extend(str(e.get('result', '')) for e in events
+                            if isinstance(e, dict) and e.get('type') == 'result' and e.get('is_error') is True)
+        except (ValueError, TypeError):
+            pass
+    text = '\n'.join(messages).lower()
     if re.search(r'permission denied|permission_denied|\beacces\b|\beperm\b', text):
         return 'permission_denied'
-    if re.search(r'model.*(not found|unavailable|not available|service info|not supported)|\b(429|503)\b|rate.limit|overloaded', text):
+    if rc == 0 and final_success:
+        return None  # Historical service warnings cannot turn a valid result into a failover.
+    if re.search(r'(?:http|status(?: code)?)[ :="\x27]*(?:408|504)\b|(?:model|inference|upstream|gateway|api request).{0,60}(?:timed?\s*out|timeout)', text):
+        return 'model_timeout'
+    if re.search(r'(?:http|status(?: code)?)[ :="\x27]*429\b|rate[ _-]?limit(?:[ _-]error| exceeded| reached)|too many requests|model.{0,40}(?:capacity|overloaded)', text):
+        return 'model_rate_limited'
+    if re.search(r'(?:http|status(?: code)?)[ :="\x27]*(?:500|502|503|529)\b|model service.{0,40}(?:error|failure)', text):
+        return 'model_service_error'
+    if re.search(r'model.{0,60}(?:not found|unavailable|not available|service info|not supported)', text):
         return 'model_unavailable'
     return 'cli_failed' if rc != 0 else None
 

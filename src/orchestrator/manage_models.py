@@ -53,7 +53,7 @@ def probe(policy_file, node=None, cli=None):
             argv = cli_command(service.node, service.cli) + ['--print', '--output-format', 'json', '--tools', '',
                     '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--setting-sources', '',
                     '--no-session-persistence', '--session-id', session, '--max-turns', '1',
-                    '--model', mid, '--fallback-model', mid, '--effort', 'high']
+                    '--model', mid, '--effort', 'high']
             meta, out, err = service.command(target, 'probe-' + mid, argv, target, 90,
                                              'Return ONLY JSON {"changes":[]}. No tools.', agent=True)
             if meta['exit_code']:

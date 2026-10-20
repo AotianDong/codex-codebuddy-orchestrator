@@ -70,14 +70,17 @@ python <skill>/scripts/run.py models-status
 |---|---|
 | codebuddy_cli / node_path | 可执行原生 CLI 或 npm JS 入口 / Node；空值自动发现 |
 | candidate_models | 候选白名单；当前适配 deepseek-v4.1-flash、minimax-m3.1-flash |
-| max_credit_multiplier | 严格小于此值，默认 0.2；修改是显式成本决策 |
-| default_model | 冷启动默认，可空；仍须通过证据与成本检查 |
-| benchmark_enabled | 是否启用测评和测评路由 |
+| max_credit_multiplier | 严格小于此值，最高0.2；等于上限也拒绝 |
+| primary_model | 固定为 deepseek-v4.1-flash，开发任务默认优先 |
+| fallback_model / fallback_model_verified | 默认null/false；准确MiniMax ID核验可用且倍率合规后才能启用 |
+| max_technical_retries | 明确模型服务超时的额外重试次数，默认1，范围0..2 |
+| default_model | 旧字段，仅允许空或与主模型一致；不覆盖固定优先级 |
+| benchmark_enabled | 是否启用测评；结果不覆盖开发任务固定优先级 |
 | agent_timeout_seconds / max_reworks | 最长 600 秒 / 0 或 1；任务只能进一步收紧 |
 | test_commands | manifest 未提供测试时使用的可信 argv 对象数组 |
 | log_directory | 作业目录，必须位于被调度源仓库外 |
 
-不会把个人历史成绩、账号目录和倍率作为公共默认值。倍率来自当前账号 ACP 目录，带哈希、时间和 CLI 版本绑定；过期、未知、冲突或模型身份缺失时停止。显式 pin 从不切换；自动模式仅在可用性故障时转向另一个当时已核验且满足阈值的候选。
+不会把个人历史成绩、账号目录和倍率作为公共默认值。倍率来自当前账号ACP目录，带哈希、时间和CLI版本约束，不假设DeepSeek永久免费。默认固定DeepSeek，仅明确服务不可用、限流/容量错误、服务故障或模型服务超时重试耗尽后，才切换至已核验且严格低于0.2的MiniMax。测试失败继续使用当前模型返工一次，权限、本地环境、JSON和范围问题停止。所有调用显式传入模型，不启用CLI隐式fallback。详见[故障分类、重试与副本恢复](docs/MODEL_ROUTING.md)。
 
 ## 模型测评
 
@@ -91,7 +94,7 @@ python scripts/cbo.py --config <config> history
 
 权重：测试35、一次成功20、有限 AST 质量15、返工10、速度10、成本代理10；任务等权。记录成功、测试、Diff、返工、耗时、tokens、倍率、环境与任务来源，生成本地 JSON 和 Markdown。实际积分当前无法从 CLI 获得时为 null，倍率×tokens 只作相对成本代理，不能称为积分；单位成功任务代理成本也明确标注。质量检查不是全面代码评审。
 
-至少十个配对任务、核心重复满足要求、正确性与质量>=90%、差距>=3 分且配对非成本 bootstrap 区间支持领先者才建议切换。相近或样本不足时不宣称胜者。默认模型或最低倍率已核验候选负责冷启动。真实任务单独持久化成功率等观测，不与 Benchmark 混分或触发频繁切换。
+至少十个配对任务、核心重复满足要求、正确性与质量>=90%、差距>=3分且配对非成本bootstrap区间支持领先者才形成比较建议。相近或样本不足时不宣称胜者。测评报告仅作比较，不改变DeepSeek主模型与MiniMax故障备用的固定策略。真实任务单独持久化观测，不与Benchmark混分或触发切换。
 
 ## 更新、卸载与示例
 

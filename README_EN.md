@@ -47,8 +47,11 @@ Start a new Codex session and ask: “Use $codex-codebuddy to fix this bug, run 
 |---|---|
 | codebuddy_cli / node_path | Native executable or npm JS entry / Node; empty means discovery |
 | candidate_models | Whitelist, currently adapted to deepseek-v4.1-flash and minimax-m3.1-flash |
-| max_credit_multiplier | Strict `<` comparison, default 0.2; raising it is an explicit cost decision |
-| default_model | Optional verified cold-start preference |
+| max_credit_multiplier | Strict `<` comparison; hard ceiling 0.2, equality rejected |
+| primary_model | Fixed deepseek-v4.1-flash development priority |
+| fallback_model / fallback_model_verified | Null/false until exact MiniMax headless and price evidence qualifies |
+| max_technical_retries | Extra confirmed remote-timeout retries, default 1, allowed 0..2 |
+| default_model | Legacy field: null or the fixed primary only |
 | benchmark_enabled | Benchmark execution and routing toggle |
 | agent_timeout_seconds / max_reworks | Maximum 600 seconds / 0 or 1; tasks may tighten |
 | test_commands | Trusted test objects used if a manifest omits tests |
@@ -56,7 +59,7 @@ Start a new Codex session and ask: “Use $codex-codebuddy to fix this bug, run 
 
 See [manifest schema and workflow](skills/codex-codebuddy/references/workflow.md). Commands are submit/execute, run/status/progress/result/diff, models-refresh/probe/status, doctor, benchmark and history. Options precede the action. Manifests are trusted executable input; review them before execution.
 
-No borrowed account evidence or historical model scores ship as defaults. Rate evidence is hash/time/CLI-version bound and expires within 24 hours. Unknown/conflicting/stale prices or missing observed model identity fail closed. Pinned models never switch. Automatic availability fallback can only use another currently verified candidate under the configured threshold.
+No borrowed account evidence or historical model scores ship as defaults. Rate evidence is hash/time/CLI-version bound and expires within 24 hours; free pricing is not assumed permanent. Development starts with DeepSeek. Only explicit provider outages, rate/capacity errors or confirmed remote timeouts after the technical retry budget may select the qualified MiniMax fallback. Test failures keep the current model for one rework; permissions, local errors and JSON failures stop. CLI implicit fallback is disabled. See [routing details](docs/MODEL_ROUTING.md).
 
 ## Benchmark and model selection
 
@@ -64,7 +67,7 @@ Run `benchmark --prepare`, then `benchmark` using the CLI. Standard fixtures cov
 
 Local JSON/Markdown reports record time, success, tests, diff acceptance, rework, tokens, rates, environment and task type. Weights: tests 35, first pass 20, deterministic AST quality 15, rework 10, speed 10, relative cost proxy 10. Tasks have equal weight. Actual account credits remain null when not exposed by CLI; rate × tokens and proxy cost per successful task are explicitly estimates, never credits. Static quality checks do not establish maintainability or security.
 
-Routing requires >=10 paired tasks, sufficient core repeats, >=90% correctness/quality, >=3 score points and paired non-cost bootstrap support. Small samples or close outcomes do not produce a winner. Cold start uses an explicit eligible default, otherwise the cheapest verified candidate. Real-task observations are persisted separately; they do not silently mix with benchmarks or cause unstable switching.
+Comparison recommendations require >=10 paired tasks, sufficient core repeats, >=90% correctness/quality, >=3 score points and paired non-cost bootstrap support. Reports do not override the fixed DeepSeek-primary/MiniMax-service-fallback policy. Real-task observations remain separate and do not trigger model switches.
 
 ## Lifecycle and examples
 

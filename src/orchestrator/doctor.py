@@ -14,9 +14,14 @@ def inspect(cfg):
     try:
         cli_command(node, cli)
         result.update(codebuddy_found=True, codebuddy_version=cli_version(cli, node))
-        ok, rejected = ModelPolicy(cfg['_state'] / 'models.json', cli).eligible()
+        policy = ModelPolicy(cfg['_state'] / 'models.json', cli)
+        ok, rejected = policy.eligible()
         result.update(model_eligible=list(ok), model_rejected=rejected)
+        result['primary_model'] = cfg['primary_model']
+        result['primary_ready'] = cfg['primary_model'] in ok
+        result['fallback_model'] = cfg['fallback_model']
+        result['fallback_qualified'] = (cfg['fallback_model_verified'] is True and cfg['fallback_model'] in ok)
     except Exception as exc:
         result['next_action'] = str(exc) + '; run models-refresh then models-probe after CodeBuddy authentication'
-    result['ready_for_execution'] = sys.version_info >= (3, 10) and result['git_found'] and result['codebuddy_found'] and bool(result['model_eligible'])
+    result['ready_for_execution'] = sys.version_info >= (3, 10) and result['git_found'] and result['codebuddy_found'] and result.get('primary_ready', False)
     return result

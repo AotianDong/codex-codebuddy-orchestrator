@@ -31,6 +31,8 @@ class ModelPolicyTests(unittest.TestCase):
         s.write_json(self.evidence, self.catalog)
         self.models = self.base / 'models.json'
         self.config = {'max_credit_multiplier': '0.2', 'evidence_valid_hours': 24,
+                       'primary_model': m.PRIMARY, 'fallback_model': m.FALLBACK,
+                       'fallback_model_verified': True, 'max_technical_retries': 1,
                        'models': {mid: {'credit_multiplier': rate, 'rate_evidence': 'catalog.json',
                                        'rate_evidence_sha256': m.sha(self.evidence),
                                        'available_verified': True, 'headless_verified': True}
@@ -51,7 +53,7 @@ class ModelPolicyTests(unittest.TestCase):
         s.write_json(self.models, self.config)
 
     def test_allowed_and_manual(self):
-        self.assertEqual(self.policy.choose()['model_id'], 'minimax-m3.1-flash')
+        self.assertEqual(self.policy.choose()['model_id'], m.PRIMARY)
         self.assertEqual(self.policy.choose('deepseek-v4.1-flash')['credit_multiplier'], '0.11')
 
     def test_boundary_strictly_less_and_unknown(self):
@@ -71,7 +73,7 @@ class ModelPolicyTests(unittest.TestCase):
         self.save()
         with self.assertRaises(m.PolicyError) as cm:
             self.policy.choose()
-        self.assertEqual(cm.exception.kind, 'no_compliant_model')
+        self.assertEqual(cm.exception.kind, 'credit_multiplier_unknown')
 
     def test_unknown_id_even_if_in_config(self):
         self.config['models']['expensive'] = copy.deepcopy(next(iter(self.config['models'].values())))
@@ -121,8 +123,8 @@ class ModelPolicyTests(unittest.TestCase):
             self.policy.choose('deepseek-v4.1-flash')
         self.assertEqual(cm.exception.kind, 'model_unavailable')
 
-    def test_latest_valid_report_routes(self):
-        report = {'recommendation': 'deepseek-v4.1-flash', 'valid_for_routing': True,
+    def test_benchmark_cannot_override_fixed_priority(self):
+        report = {'recommendation': m.FALLBACK, 'valid_for_routing': True,
                   'scheduler_sha256': m.sha(Path(s.__file__)),
                   'policy_rate_signature': self.policy.rate_signature(), 'finished_at': s.now(),
                   'recommendation_reason': 'fixture score'}
@@ -131,7 +133,7 @@ class ModelPolicyTests(unittest.TestCase):
         self.assertEqual(self.policy.choose()['model_id'], 'deepseek-v4.1-flash')
         report['scheduler_sha256'] = 'stale'
         s.write_json(self.base / 'benchmark/latest.json', report)
-        self.assertEqual(self.policy.choose()['model_id'], 'minimax-m3.1-flash')
+        self.assertEqual(self.policy.choose()['model_id'], m.PRIMARY)
 
     def test_poor_correctness_is_not_provisional_default(self):
         (self.base / 'benchmark').mkdir()
@@ -144,9 +146,14 @@ class ModelPolicyTests(unittest.TestCase):
 
     def service(self):
         service = s.Scheduler(self.base / 'jobs', cli=self.cli, models=self.models)
-        job = self.base / 'job'
-        job.mkdir(exist_ok=True)
+        job = service.jobs / 'unitjob'
+        job.mkdir(parents=True, exist_ok=True)
         (job / 'agent-cwd').mkdir(exist_ok=True)
+        (job / 'workspace/.git').mkdir(parents=True, exist_ok=True)
+        s.write_json(job / 'baseline.json', {})
+        s.write_json(job / 'clean-git.json', {})
+        import shutil
+        shutil.copytree(job / 'workspace', job / 'clean-workspace', dirs_exist_ok=True)
         return service, job
 
     def response(self, mid):
@@ -165,8 +172,8 @@ class ModelPolicyTests(unittest.TestCase):
             service.call_agent(job, {}, 2, 'rework')
         self.assertEqual(len(calls), 2)
         for argv in calls:
-            self.assertEqual(argv[argv.index('--model') + 1], 'minimax-m3.1-flash')
-            self.assertEqual(argv[argv.index('--fallback-model') + 1], 'minimax-m3.1-flash')
+            self.assertEqual(argv[argv.index('--model') + 1], m.PRIMARY)
+            self.assertNotIn('--fallback-model', argv)
             self.assertNotIn('--dangerously-skip-permissions', argv)
 
     def test_only_eligible_fallback(self):
@@ -180,16 +187,17 @@ class ModelPolicyTests(unittest.TestCase):
             return {'exit_code': 0, 'duration_seconds': 1}, self.response(mid), ''
         with patch.object(service, 'command', side_effect=command):
             service.call_agent(job, {}, 1, 'task')
-        self.assertEqual(used, ['minimax-m3.1-flash', 'deepseek-v4.1-flash'])
+        self.assertEqual(used, [m.PRIMARY, m.FALLBACK])
         # A now-expensive backup must never execute.
-        self.config['models']['deepseek-v4.1-flash']['credit_multiplier'] = '0.2'
+        self.config['models'][m.FALLBACK]['credit_multiplier'] = '0.2'
         self.save()
+        service.active_model = None  # New task; run() clears this in production.
         used.clear()
         with patch.object(service, 'command', side_effect=command):
             with self.assertRaises(s.Failure) as cm:
                 service.call_agent(job, {}, 1, 'task')
-        self.assertEqual(cm.exception.kind, 'no_compliant_model')
-        self.assertEqual(used, ['minimax-m3.1-flash'])
+        self.assertEqual(cm.exception.kind, 'fallback_unavailable')
+        self.assertEqual(used, [m.PRIMARY])
 
     def test_manual_no_fallback_and_model_timeout_distinct(self):
         service, job = self.service()
@@ -197,7 +205,7 @@ class ModelPolicyTests(unittest.TestCase):
         with patch.object(service, 'command', side_effect=s.Failure('timeout', 'injected')) as call:
             with self.assertRaises(s.Failure) as cm:
                 service.call_agent(job, {}, 1, 'task')
-        self.assertEqual(cm.exception.kind, 'model_timeout')
+        self.assertEqual(cm.exception.kind, 'timeout')
         self.assertEqual(call.call_count, 1)
 
     def test_overlimit_reaches_no_process(self):

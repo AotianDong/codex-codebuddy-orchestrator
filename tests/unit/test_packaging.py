@@ -17,11 +17,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class NewPolicyTests(ModelPolicyTests):
     # Reuse fixture creation without rediscovering inherited regression cases.
-    def test_configurable_threshold_and_explicit_default(self):
+    def test_threshold_can_tighten_but_cannot_exceed_point_two(self):
         self.config['max_credit_multiplier'] = '0.5'
         self.config['default_model'] = 'deepseek-v4.1-flash'
         self.save()
-        self.assertEqual(self.policy.choose()['model_id'], 'deepseek-v4.1-flash')
+        with self.assertRaises(Exception):
+            self.policy.choose()
         self.config['max_credit_multiplier'] = '0.08'
         self.save()
         with self.assertRaises(Exception):
