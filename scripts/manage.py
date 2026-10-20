@@ -72,6 +72,11 @@ def install(dest, state, update=False):
         shutil.copytree(ROOT / 'src/orchestrator', temporary / 'scripts/runtime/orchestrator',
                         ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
         venv.create(temporary / '.venv', with_pip=False, symlinks=False)
+        # CPython creates this internal alias on 64-bit Linux even with symlinks=False.
+        # No third-party packages are installed here; retain the real lib directory only.
+        lib_alias = temporary / '.venv/lib64'
+        if lib_alias.is_symlink() and lib_alias.resolve() == (temporary / '.venv/lib').resolve():
+            lib_alias.unlink()
         metadata = {'project': 'codex-codebuddy-orchestrator', 'version': '0.1.0',
                     'path': str(dest.resolve()), 'config': str(cfg.resolve())}
         (temporary / 'scripts/local.json').write_text(json.dumps({'config': metadata['config']}), encoding='utf-8')
@@ -114,11 +119,15 @@ def main():
     p.add_argument('--skills-dir', type=Path, default=default_skills())
     p.add_argument('--state-dir', type=Path)
     a = p.parse_args()
-    dest = a.skills_dir.expanduser().absolute() / 'codex-codebuddy'
+    requested_root = a.skills_dir.expanduser().absolute()
+    if requested_root.is_symlink() or (hasattr(requested_root, 'is_junction') and requested_root.is_junction()):
+        raise SystemExit('Linked Skill roots are unsupported')
+    # Normalize OS aliases (macOS /var and Windows short paths) before ownership checks.
+    dest = requested_root.resolve() / 'codex-codebuddy'
     state_arg = a.state_dir
     if state_arg is None and a.action == 'update' and dest.exists():
         state_arg = Path(verify_owned(dest)['config']).parent
-    state = (state_arg or default_state()).expanduser().absolute()
+    state = (state_arg or default_state()).expanduser().resolve()
     # Config/history must survive uninstall and may never live under the Skill.
     if state == dest or dest in state.parents:
         raise SystemExit('state-dir must be outside installed Skill')

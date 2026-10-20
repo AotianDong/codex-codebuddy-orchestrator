@@ -59,7 +59,7 @@ class PackagingTests(unittest.TestCase):
                 with self.assertRaises((ValueError,ArithmeticError)):
                     config.load(path)
             s.write_json(path,data)
-            self.assertEqual(config.load(path)['_jobs'],Path(d)/'jobs')
+            self.assertEqual(config.load(path)['_jobs'],(Path(d)/'jobs').resolve())
 
     def test_shell_shims_are_not_executed(self):
         with tempfile.TemporaryDirectory() as d:

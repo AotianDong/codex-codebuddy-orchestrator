@@ -37,7 +37,7 @@ class LifecycleTests(unittest.TestCase):
             automatic=subprocess.run([sys.executable,'-B',str(ROOT/'scripts/manage.py'),'update',
                                       '--skills-dir',str(skills)],env=env,capture_output=True,text=True,timeout=60)
             self.assertEqual(automatic.returncode,0,automatic.stdout+automatic.stderr)
-            self.assertEqual(json.loads((installed/'.installation.json').read_text('utf-8'))['config'],str(state/'config.yaml'))
+            self.assertEqual(json.loads((installed/'.installation.json').read_text('utf-8'))['config'],str((state/'config.yaml').resolve()))
             self.assertEqual((state/'config.yaml').read_bytes(),cfg)
             marker=installed/'custom-user-file';marker.write_text('keep')
             manage('uninstall',1)
