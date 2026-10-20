@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "repository": "<absolute-path-to-generated-demo-repository>",
+  "requirements": [
+    "Implement monetary line totals with Decimal(str(unit_price)); quantity must be a non-negative int, excluding bool, otherwise raise ValueError.",
+    "discount_percent must be 0..100 inclusive, otherwise raise ValueError; apply it before rounding to 0.01 using ROUND_HALF_UP.",
+    "order_total must pass each optional discount_percent (default 0) to line_total and sum rounded line totals; empty order is Decimal(\"0.00\").",
+    "Keep existing public function signatures. Monetary returns must have exactly two decimal places."
+  ],
+  "allowed_files": [
+    "src/pricing.py",
+    "src/order_summary.py"
+  ],
+  "context_files": [
+    "src/pricing.py",
+    "src/order_summary.py",
+    "tests_acceptance.py"
+  ],
+  "forbidden_operations": [
+    "Do not change tests or add dependencies.",
+    "Do not access network, secrets, source repository or Git metadata.",
+    "Do not delete files, commit, merge or push."
+  ],
+  "acceptance": [
+    {
+      "id": "money",
+      "description": "Discounts and HALF_UP monetary rounding pass fixed tests",
+      "test_ids": [
+        "pricing"
+      ]
+    },
+    {
+      "id": "validation",
+      "description": "Reject invalid quantity and discount inputs",
+      "test_ids": [
+        "pricing"
+      ]
+    },
+    {
+      "id": "order",
+      "description": "Pass discounts through order totals and support empty orders",
+      "test_ids": [
+        "pricing"
+      ]
+    }
+  ],
+  "tests": [
+    {
+      "id": "pricing",
+      "argv": [
+        "$PYTHON",
+        "-I",
+        "-B",
+        "tests_acceptance.py"
+      ],
+      "timeout_seconds": 30
+    }
+  ],
+  "max_reworks": 1,
+  "agent_timeout_seconds": 180
+}

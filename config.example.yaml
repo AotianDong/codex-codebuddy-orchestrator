@@ -1,0 +1,7 @@
+{
+  "codebuddy_cli": "", "node_path": "",
+  "candidate_models": ["deepseek-v4.1-flash", "minimax-m3.1-flash"],
+  "max_credit_multiplier": "0.2", "default_model": null,
+  "benchmark_enabled": true, "agent_timeout_seconds": 180,
+  "max_reworks": 1, "test_commands": [], "log_directory": "jobs"
+}

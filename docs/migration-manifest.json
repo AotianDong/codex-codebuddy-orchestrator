@@ -1,0 +1,53 @@
+{
+  "source_label": "existing local codebuddy-workflow V2",
+  "files": [
+    {
+      "source": "outputs/codebuddy-workflow/scheduler.py",
+      "sha256": "355b8d58587bf94af28495efac8dff8914beb00e2c58998c9ee984bf46ad84cc"
+    },
+    {
+      "source": "outputs/codebuddy-workflow/model_policy.py",
+      "sha256": "3b1921f066c2b8e5fcc3c08bb4a078d42f6cff11450ba2763fd3d09dc6dd8358"
+    },
+    {
+      "source": "outputs/codebuddy-workflow/benchmark.py",
+      "sha256": "a93eff1b72d45d0a327a84ef872a646fd1dc8a03c1982148b618f544cb90fb5d"
+    },
+    {
+      "source": "outputs/codebuddy-workflow/prepare_benchmarks.py",
+      "sha256": "9fea1a540e4c4374b616e4948d51a35a94ac22629ea7fec91a71585126ed9e09"
+    },
+    {
+      "source": "outputs/codebuddy-workflow/audit_models.py",
+      "sha256": "831b1cae2770c5e32e6a1590f5df1d486637ecf51b216abc6630d9f200f9350c"
+    },
+    {
+      "source": "outputs/codebuddy-workflow/manage_models.py",
+      "sha256": "292e7ccafec37ea5991c8082a900af0839abc457a0b2bb7f193d35179ef43481"
+    },
+    {
+      "source": "outputs/codebuddy-workflow/tests/test_scheduler.py",
+      "sha256": "b8d0284126a4bcaff13a5860f9705efd850ac789417289be35e18141e0165806"
+    },
+    {
+      "source": "outputs/codebuddy-workflow/tests/test_model_policy.py",
+      "sha256": "39a6c049a64c213b0145840f9eedd6cccb6febc15df32f00d41af5e6e91032cd"
+    },
+    {
+      "source": "outputs/codebuddy-workflow/demo-project/src/pricing.py",
+      "sha256": "fa30aa31509078ef3a4cf38806ca41c8e08fa5a722d49de137f340f13163e01d"
+    },
+    {
+      "source": "outputs/codebuddy-workflow/demo-project/src/order_summary.py",
+      "sha256": "8bfd881fb19818541eb91db3c173759b5b8f82604dd6f2464bfc802050d9c94a"
+    },
+    {
+      "source": "outputs/codebuddy-workflow/demo-project/tests_acceptance.py",
+      "sha256": "9b0c5fba82591ac79fdccb989fa459804ca181a878e8fd83efeb76ab27efaece"
+    },
+    {
+      "source": "outputs/codebuddy-workflow/demo-task.json",
+      "sha256": "0b9897ab1f8fdb110f7a3c37b5c8566208e0350b2fe5f251a2a47eb52dffaf3c"
+    }
+  ]
+}

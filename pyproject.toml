@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codex-codebuddy-orchestrator"
+version = "0.1.0"
+description = "Scoped CodeBuddy proposals with independent Git copies and fixed host acceptance"
+readme = "README_EN.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = []
+
+[project.scripts]
+codex-codebuddy = "orchestrator.dispatcher:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

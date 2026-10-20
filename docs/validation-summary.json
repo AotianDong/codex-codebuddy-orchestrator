@@ -1,0 +1,67 @@
+{
+  "at_utc": "2026-10-20T03:04:36.448137+00:00",
+  "platform": "Windows 11",
+  "python": "3.13.15",
+  "codebuddy": "2.170.0",
+  "original_regression": {
+    "passed": 37,
+    "scheduler": 18,
+    "model_and_benchmark": 19
+  },
+  "packaged_tests": {
+    "passed": 46,
+    "failed": 0,
+    "note": "Lifecycle cases rerun after final installer changes"
+  },
+  "live_demo": {
+    "runs": 1,
+    "business_assertions": 8,
+    "passed": true,
+    "source_unchanged": true,
+    "reworks": 0
+  },
+  "live_benchmark": {
+    "runs": 32,
+    "distinct_tasks": 12,
+    "functional_checks": 96,
+    "quality_checks": 32,
+    "all_passed": true,
+    "evidence_verification": {
+      "scores_recompute": true,
+      "recommendation_recomputes": true,
+      "paired_conditions": true,
+      "all_job_evidence": true,
+      "scheduler_matches": true
+    },
+    "recommendation": null,
+    "reason": "No clear winner: score gap <3 or paired non-cost evidence does not favor the estimated-cost score leader",
+    "actual_credits": null,
+    "models": {
+      "deepseek-v4.1-flash": {
+        "rate_observed": "0.11",
+        "runs": 16,
+        "success_rate": 1.0,
+        "average_seconds": 12.807690006258781,
+        "score_with_cost_proxy": 96.54763794253113
+      },
+      "minimax-m3.1-flash": {
+        "rate_observed": "0.08",
+        "runs": 16,
+        "success_rate": 1.0,
+        "average_seconds": 14.135494724996533,
+        "score_with_cost_proxy": 99.54253638185205
+      }
+    }
+  },
+  "skill_format_validator": true,
+  "clean_venv_wheel": true,
+  "powershell_lifecycle": true,
+  "git_bash_lifecycle_on_windows": true,
+  "macos_linux_device_verified": false,
+  "github_ci_executed": false,
+  "work_ui_install_verified": false,
+  "remote_created": false,
+  "pushed": false,
+  "security_scan": "no findings; pattern scan plus explicit file review, not a security proof",
+  "scope": "initial_local_validation_before_authorized_publication"
+}
